@@ -1,0 +1,153 @@
+constants:
+  imagenet_bgr256_mean: [103.53, 116.28, 123.675]
+  imagenet_bgr256_std: [1.0, 1.0, 1.0]
+  imagenet_rgb256_mean: [123.675, 116.28, 103.53]
+  imagenet_rgb256_std: [58.395, 57.12, 57.375]
+dataloader:
+  evaluator: {_target_: detectron2.evaluation.COCOEvaluator, dataset_name: '${..test.dataset.names}'}
+  test:
+    _target_: detectron2.data.build_detection_test_loader
+    dataset: {_target_: detectron2.data.get_detection_dataset_dicts, filter_empty: false, names: coco_2017_val}
+    mapper:
+      _target_: detectron2.data.DatasetMapper
+      augmentations:
+      - {_target_: detectron2.data.transforms.ResizeShortestEdge, max_size: 1333, short_edge_length: 800}
+      image_format: ${...train.mapper.image_format}
+      is_train: false
+    num_workers: 4
+  train:
+    _target_: detectron2.data.build_detection_train_loader
+    dataset: {_target_: detectron2.data.get_detection_dataset_dicts, names: coco_2017_train}
+    mapper:
+      _target_: detectron2.data.DatasetMapper
+      augmentations:
+      - {_target_: detectron2.data.transforms.RandomFlip, horizontal: true}
+      - {_target_: detectron2.data.transforms.ResizeScale, max_scale: 2.0, min_scale: 0.1, target_height: 1024, target_width: 1024}
+      - _target_: detectron2.data.transforms.FixedSizeCrop
+        crop_size: [1024, 1024]
+      image_format: RGB
+      is_train: true
+      recompute_boxes: true
+      use_instance_mask: true
+    num_workers: 4
+    total_batch_size: 32
+lr_multiplier:
+  _target_: detectron2.solver.WarmupParamScheduler
+  scheduler:
+    _target_: fvcore.common.param_scheduler.MultiStepParamScheduler
+    milestones: [52500, 62500, 67500]
+    values: [1.0, 0.1, 0.01]
+  warmup_factor: 0.001
+  warmup_length: 0.001851851851851852
+model:
+  _target_: detectron2.modeling.GeneralizedRCNN
+  backbone:
+    _target_: detectron2.modeling.FPN
+    bottom_up:
+      _target_: detectron2.modeling.HieraAbsWin
+      embed_dim: 96
+      img_size: 1024
+      model_name: mae_hiera_abs_win_tiny_224
+      num_heads: 1
+      out_features: [stage_0, stage_1, stage_2, stage_3]
+      stages: [1, 2, 7, 2]
+    in_features: ${.bottom_up.out_features}
+    out_channels: 256
+    top_block: {_target_: detectron2.modeling.backbone.fpn.LastLevelMaxPool}
+  input_format: RGB
+  pixel_mean: [123.675, 116.28, 103.53]
+  pixel_std: [58.395, 57.12, 57.375]
+  proposal_generator:
+    _target_: detectron2.modeling.proposal_generator.RPN
+    anchor_generator:
+      _target_: detectron2.modeling.anchor_generator.DefaultAnchorGenerator
+      aspect_ratios: [0.5, 1.0, 2.0]
+      offset: 0.0
+      sizes:
+      - [32]
+      - [64]
+      - [128]
+      - [256]
+      - [512]
+      strides: [4, 8, 16, 32, 64]
+    anchor_matcher:
+      _target_: detectron2.modeling.matcher.Matcher
+      allow_low_quality_matches: true
+      labels: [0, -1, 1]
+      thresholds: [0.3, 0.7]
+    batch_size_per_image: 256
+    box2box_transform:
+      _target_: detectron2.modeling.box_regression.Box2BoxTransform
+      weights: [1.0, 1.0, 1.0, 1.0]
+    head: {_target_: detectron2.modeling.proposal_generator.StandardRPNHead, in_channels: 256, num_anchors: 3}
+    in_features: [p2, p3, p4, p5, p6]
+    nms_thresh: 0.7
+    positive_fraction: 0.5
+    post_nms_topk: [1000, 1000]
+    pre_nms_topk: [2000, 1000]
+  roi_heads:
+    _target_: detectron2.modeling.StandardROIHeads
+    batch_size_per_image: 512
+    box_head:
+      _target_: detectron2.modeling.roi_heads.FastRCNNConvFCHead
+      conv_dims: []
+      fc_dims: [1024, 1024]
+      input_shape: !!python/object:detectron2.layers.shape_spec.ShapeSpec {channels: 256, height: 7, stride: null, width: 7}
+    box_in_features: [p2, p3, p4, p5]
+    box_pooler:
+      _target_: detectron2.modeling.poolers.ROIPooler
+      output_size: 7
+      pooler_type: ROIAlignV2
+      sampling_ratio: 0
+      scales: [0.25, 0.125, 0.0625, 0.03125]
+    box_predictor:
+      _target_: detectron2.modeling.FastRCNNOutputLayers
+      box2box_transform:
+        _target_: detectron2.modeling.box_regression.Box2BoxTransform
+        weights: [10, 10, 5, 5]
+      input_shape: !!python/object:detectron2.layers.shape_spec.ShapeSpec {channels: 1024, height: null, stride: null, width: null}
+      num_classes: ${..num_classes}
+      test_score_thresh: 0.05
+    mask_head:
+      _target_: detectron2.modeling.roi_heads.MaskRCNNConvUpsampleHead
+      conv_dims: [256, 256, 256, 256, 256]
+      input_shape: !!python/object:detectron2.layers.shape_spec.ShapeSpec {channels: 256, height: 14, stride: null, width: 14}
+      num_classes: ${..num_classes}
+    mask_in_features: [p2, p3, p4, p5]
+    mask_pooler:
+      _target_: detectron2.modeling.poolers.ROIPooler
+      output_size: 14
+      pooler_type: ROIAlignV2
+      sampling_ratio: 0
+      scales: [0.25, 0.125, 0.0625, 0.03125]
+    num_classes: 80
+    positive_fraction: 0.25
+    proposal_matcher:
+      _target_: detectron2.modeling.matcher.Matcher
+      allow_low_quality_matches: false
+      labels: [0, 1]
+      thresholds: [0.5]
+optimizer:
+  _target_: torch.optim.AdamW
+  betas: [0.9, 0.999]
+  lr: 0.00016
+  params:
+    _target_: detectron2.solver.get_default_optimizer_params
+    base_lr: ${..lr}
+    overrides:
+      pos_embed: {weight_decay: 0.0}
+      rel_pos_h: {weight_decay: 0.0}
+      rel_pos_w: {weight_decay: 0.0}
+    weight_decay_norm: 0.0
+  weight_decay: 0.1
+train:
+  amp: {enabled: true}
+  bottom_up_ckpt: /home/s108061519/hiera_moe//logs/in1k_mae/mae_hiera_abs_win_tiny_512/epoch-epoch=99.ckpt
+  checkpointer: {max_to_keep: 100, period: 5000}
+  ddp: {broadcast_buffers: false, find_unused_parameters: false, fp16_compression: true}
+  device: cuda
+  eval_period: 5000
+  init_checkpoint: /home/lynuc/model_0079999.pth
+  log_period: 20
+  max_iter: 135000
+  output_dir: /home/lynuc/hiera_multi_scale/output/mask_rcnn_hiera_abs_win_t_512
